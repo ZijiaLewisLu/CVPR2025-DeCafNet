@@ -8,4 +8,5 @@ Official Repo for CVPR 2025 Paper -- DeCafNet: Delegate and Conquer for Efficien
 [![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/decafnet-delegate-and-conquer-for-efficient/natural-language-moment-retrieval-on-mad)](https://paperswithcode.com/sota/natural-language-moment-retrieval-on-mad?p=decafnet-delegate-and-conquer-for-efficient)
 [![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/decafnet-delegate-and-conquer-for-efficient/natural-language-moment-retrieval-on-tacos)](https://paperswithcode.com/sota/natural-language-moment-retrieval-on-tacos?p=decafnet-delegate-and-conquer-for-efficient)
 
+
 *code will be released soon*
