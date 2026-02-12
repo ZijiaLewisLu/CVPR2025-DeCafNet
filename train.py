@@ -1,11 +1,7 @@
 import argparse
 import os
-import shutil
 
-# os.system('pip install torchtext==0.6.0')
 import torchtext
-# print(torchtext.__version__)
-# print(dir(torchtext))
 
 try:
     torchtext.disable_torchtext_deprecation_warning()
@@ -17,8 +13,8 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 mp.set_sharing_strategy('file_system')
 
-from libs.core.utils import setup_cfg   
-from libs.dist_utils import print0, get_rank, barrier, get_local_rank
+from libs.utils.opt_utils import setup_cfg, create_wandb
+from libs.utils.dist_utils import print0, get_rank, barrier, get_local_rank
 from datetime import timedelta
 
 def main(rank, args): # opt, wandb_run):
@@ -33,12 +29,9 @@ def main(rank, args): # opt, wandb_run):
     torch.backends.cudnn.enabled = True
     torch.backends.cudnn.benchmark = True
     
-    opt['_world_size'] = int(os.environ['WORLD_SIZE'])
+    opt['_world_size'] = int(os.environ.get('WORLD_SIZE', 1))
     opt['_distributed'] = opt['_world_size'] > 1
     if opt['_distributed']:
-        # os.environ['MASTER_ADDR'] = 'localhost'
-        # if 'MASTER_PORT' not in os.environ:
-        #     os.environ['MASTER_PORT'] = '29500'
         dist.init_process_group(
             backend='nccl', init_method='env://',
             rank=rank, world_size=opt['_world_size'],
@@ -52,6 +45,10 @@ def main(rank, args): # opt, wandb_run):
         os.makedirs(root, exist_ok=True)
         os.makedirs(os.path.join(root, 'models'), exist_ok=True)
         os.makedirs(os.path.join(root, 'states'), exist_ok=True)
+
+    wandb_run = None
+    if get_rank() == 0 and opt.aux.get('wandb_enable', False):
+        wandb_run = create_wandb(opt)
 
     print0("==================")
     print0(opt.dump())
@@ -69,17 +66,23 @@ def main(rank, args): # opt, wandb_run):
     )
 
 
-    if opt.task == 'grounder':        
-        # if opt.train.version == 1:
-        #     from libs.worker import Trainer
-        if opt.train.version == 2:
-            from libs.worker_v2 import Trainer
+    if opt.task == 'mad':
+        from libs.mad.worker import Trainer
 
-    trainer = Trainer(opt)
+    elif opt.task == 'svg': # Short Video Grounding: charades and TACoS
+        from libs.svg.worker import Trainer
+
+    elif opt.task == 'ego4d':         
+        from libs.ego4d.worker import Trainer
+
+    trainer = Trainer(opt, wandb_run=wandb_run)
 
     trainer.run()
     if opt['_distributed']:
         dist.destroy_process_group()
+
+    if get_rank() == 0 and wandb_run is not None:
+        wandb_run.finish()
 
     if get_rank() == 0:
         open(os.path.join(root, 'finished'), 'w').close()
@@ -87,8 +90,6 @@ def main(rank, args): # opt, wandb_run):
 if __name__ == '__main__':
     os.environ['DECORD_EOF_RETRY_MAX']='20480'
 
-    # if 'LOCAL_RANK' not in os.environ:
-    #     mpi_discovery()
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--cfg", dest="cfg_file", nargs="*",
@@ -98,13 +99,5 @@ if __name__ == '__main__':
     parser.add_argument("--local-rank", type=int)
     args = parser.parse_args()
 
-        # rw_mount(delete=True)
-        # mount()
-    # if get_rank() == 0:
 
-
-    # IS_SUBMIT = True
-    main(int(os.environ['RANK']), args)
-    # easy_send(os.path.join(root, 'finished')) 
-
-    # easy_send(root)
+    main(int(os.environ.get('RANK', 0)), args)

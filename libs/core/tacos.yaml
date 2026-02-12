@@ -1,0 +1,161 @@
+data:
+  anno_file: /tmp/decafnet/data/datasets/tacos/annotations/tacos.json
+  clip_size: 16
+  clip_stride: 4
+  clip_token_fname: /tmp/decafnet/data/datasets/clip/nlq_token_features_B_32.npy
+  crop_ratio: &id001
+  - 0.9
+  - 1.0
+  downsample_rate: 4
+  eval_split: test
+  ext_score_dir: null
+  group_method: null
+  max_num_text: 4
+  # max_text_len: 48
+  # max_vid_len: 2304
+  name: svg
+  sidekick_ds: null
+  sidekick_vid_feat_dir: null
+  sidekick_vid_load: npy
+  split: train
+  text_cls_fname: null
+  text_feat_dir: null
+  to_fixed_len: false
+  tokenizer: glove
+  trunc_thresh: 0.5
+  vid_feat_dir: /tmp/decafnet/data/datasets/tacos/c3d_features
+  vid_load: npy
+eval:
+  data:
+    anno_file: /tmp/decafnet/data/datasets/tacos/annotations/tacos.json
+    clip_size: 16
+    clip_stride: 4
+    clip_token_fname: /tmp/decafnet/data/datasets/clip/nlq_token_features_B_32.npy
+    crop_ratio: *id001
+    downsample_rate: 4
+    eval_split: test
+    ext_score_dir: null
+    group_method: null
+    max_num_text: 4
+    # max_text_len: 48
+    # max_vid_len: 2304
+    name: svg
+    sidekick_ds: null
+    sidekick_vid_feat_dir: null
+    sidekick_vid_load: npy
+    split: test
+    text_cls_fname: null
+    text_feat_dir: null
+    to_fixed_len: false
+    tokenizer: glove
+    trunc_thresh: 0.5
+    vid_feat_dir: /tmp/decafnet/data/datasets/tacos/c3d_features
+    vid_load: npy
+  iou_threshs:
+  - 0.3
+  - 0.5
+  pre_nms_thresh: 0.001
+  pre_nms_topk: 2000
+  ranks:
+  - 1
+  - 5
+  seg_len_thresh: 0.1
+loss:
+  fc_a: 0.5
+  fc_s: 0.2
+model:
+  cls_head:
+    # embd_dim: 256
+    n_layers: 2
+    name: cls
+    prior_prob: 0.0
+  fusion:
+    attn_pdrop: 0.0
+    n_heads: 4
+    n_layers: 2
+    name: xattn
+    path_pdrop: 0.1
+    proj_pdrop: 0.1
+    # text_dim: 128
+    # vid_dim: 256
+    xattn_mode: affine
+  # max_text_len: 48
+  # max_vid_len: 2304
+  # mha_win_size: 19
+  name: lateiter
+  norm: false
+  # num_fpn_levels: 8
+  rdim: 64
+  reg_head:
+    # embd_dim: 256
+    n_layers: 2
+    name: reg
+    # num_fpn_levels: 8
+  rlayer: 6
+  text_net:
+    embd_dim: 128
+    in_dim: 300
+    max_seq_len: 48
+    n_heads: 4
+    name: transformer
+    use_abs_pe: true
+    use_bkgd_token: true
+  vid_net:
+    arch:
+    - 2
+    - 0
+    - 8
+    attn_pdrop: 0.0
+    cdrop: 0.25
+    embd_dim: 256
+    # fuse: cat
+    in_dim: 4096
+    max_seq_len: 2304
+    mha_win_size: 19
+    n_heads: 4
+    name: transformer
+    path_pdrop: 0.1
+    pool_only: false
+    proj_pdrop: 0.1
+    stride: 1
+    use_abs_pe: true
+  # vid_stride: 1
+nms:
+  iou_thresh: 0.1
+  max_num_segs: 5
+  min_score: 0.001
+  mode: soft_nms
+  sigma: 0.9
+  voting_thresh: 0.95
+optimizer:
+  clip_grad_norm: 1.0
+  lr: 0.001
+  name: adamw
+  weight_decay: 0.05
+pt_gen:
+  # max_seq_len: 9216
+  # num_fpn_levels: 8
+  regression_range: 4
+  sigma: 0.5
+scheduler:
+  # epochs: 20
+  gamma: 0.1
+  name: multistep
+  steps:
+  - -1
+  # warmup_epochs: 5
+seed: 1234567891
+task: svg
+train:
+  batch_size: 4
+  center_sampling: radius
+  center_sampling_radius: 1.5
+  ema_beta: 0.999
+  epochs: 20
+  loss_norm: 100
+  loss_norm_momentum: 0.9
+  loss_weight: 1.0
+  microbatch_size: 1
+  num_workers: 0
+  reg_loss: diou
+  warmup_epochs: 5

@@ -18,6 +18,12 @@ class DilatedResidualLayer(nn.Module):
         else:
             self.norm = None
 
+    def __str__(self):
+        return f"DilatedResidualLayer(Conv(d={self.dilation},h={self.nchannels}), 1x1(h={self.nchannels}), Dropout={self.dropout_rate}, ln={self.use_layernorm})"
+
+    def __repr__(self):
+        return str(self)
+
     def forward(self, x, mask=None):
         """
         x: B, D, T
@@ -37,9 +43,9 @@ class DilatedResidualLayer(nn.Module):
 
         return x
 
-class TCN(nn.Module):
+class TemporalCNN(nn.Module):
     def __init__(self, in_dim, hid_dim, out_dim, num_layers, dropout=0.5, dilation_factor=2, ln=True, ngroup=1, in_map=False):
-        super(TCN, self).__init__()
+        super(TemporalCNN, self).__init__()
         if in_map:
             self.conv_1x1 = nn.Conv1d(in_dim, hid_dim, 1)
         else:
@@ -56,6 +62,7 @@ class TCN(nn.Module):
         self.dropout_rate = dropout
         self.dilation_factor = dilation_factor
 
+        self.string = f"TemporalCNN(h:{in_dim}->{hid_dim}x{num_layers}->{out_dim}, d={dilation_factor}, ng={ngroup}, dropout={dropout}, in_map={in_map})"
 
     def __str__(self):
         return self.string 
@@ -64,7 +71,7 @@ class TCN(nn.Module):
         return str(self)
 
     def forward(self, x, mask=None):
-        # assert mask is None
+
 
         if self.in_map:
             out = self.conv_1x1(x)
@@ -75,7 +82,6 @@ class TCN(nn.Module):
             out = layer(out, mask)
 
         out = self.conv_out(out)  # B, H, T
-        # out = out.permute([2, 0, 1]) # T, 1, H 
 
         if mask is not None:
             out = out * mask[:, 0:1, :]

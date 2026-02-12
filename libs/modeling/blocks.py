@@ -377,13 +377,10 @@ class MaskedMHA(nn.Module):
             v = v.view(bs, h, d, -1).transpose(2, 3)
 
             attn = (q * self.scale) @ (k * self.scale)      # (bs, h, t1, t2)
-            # try:
             attn = attn.masked_fill(
                 mask=torch.logical_not(kv_mask[:, :, None, :]),
                 value=float('-inf'),
             )
-            # except Exception as e:
-            #     import ipdb; ipdb.set_trace()
             attn = F.softmax(attn, dim=-1)
             attn = self.attn_drop(attn)
             q = attn @ v                                    # (bs, h, t1, d)

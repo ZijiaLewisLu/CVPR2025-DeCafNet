@@ -5,8 +5,50 @@ import numpy as np
 import torch
 import traceback
 from .dist_utils import get_rank
-from .helper.utils import easy_reduce
-# from .helper.azure import log_aml_val
+
+def easy_reduce(scores, mode="mean", skip_nan=False):
+    assert isinstance(scores, list), type(scores)
+
+    if len(scores) == 0:
+        return np.nan
+
+    elif isinstance(scores[0], list):
+        average = []
+        L = len(scores[0])
+        for i in range(L):
+            average.append( easy_reduce([s[i] for s in scores ], mode=mode, skip_nan=skip_nan) )
+
+    elif isinstance(scores[0], np.ndarray):
+        assert len(scores[0].shape) == 1
+        stack = np.stack(scores, axis=0)
+        average = stack.mean(0)
+
+    elif isinstance(scores[0], tuple):
+        average = []
+        L = len(scores[0])
+        for i in range(L):
+            average.append( easy_reduce([s[i] for s in scores ], mode=mode, skip_nan=skip_nan) )
+        average = tuple(average)
+
+    elif isinstance(scores[0], dict):
+        average = {}
+        for k in scores[0]:
+            average[k] = easy_reduce([s[k] for s in scores], mode=mode, skip_nan=skip_nan)
+
+    elif isinstance(scores[0], float) or isinstance(scores[0], int) or isinstance(scores[0], np.float32): # TODO - improve
+        if skip_nan:
+            scores = [ x for x in scores if not np.isnan(x) ]
+
+        if mode == "mean":
+            average = np.mean(scores)
+        elif mode == "max":
+            average = np.max(scores)
+        elif mode == "median":
+            average = np.median(scores)
+    else:
+        raise TypeError("Unsupport Data Type %s" % type(scores[0]) )
+
+    return average
 
 
 class Logger:
@@ -27,8 +69,6 @@ class Logger:
                 except Exception as e:
                     pass
                 
-        # with open(self.filepath, 'a') as f:
-        #     print(log_str, file=f)
 
 
 class AverageMeter(object):
@@ -96,14 +136,11 @@ def iou(pred_segs, gt_segs):
     return out
 
 def log(itr, metrics_list, wandb_run=None, prefix='train'):
-    # t = len(str(self.num_itrs))
-    # log_str = f"[{self.itr:0{t}d}/{self.num_itrs:0{t}d}] "
     log_str = ""
     metrics = easy_reduce(metrics_list)
     wandb_dict = {}
     for k, v in metrics.items():
         log_str += f"{k} {v.item():.3f} | "
-        # log_aml_val(prefix, k, itr, v.item())
         wandb_dict[f'{prefix}/{k}'] = v.item()
 
     if wandb_run is not None:

@@ -9,472 +9,84 @@ from torch.optim.lr_scheduler import _LRScheduler
 
 from .blocks import MaskedConv1D, LayerNorm, Scale, LayerScale
 
-# snag_whitelist_modules = (nn.Linear, nn.Conv1d, MaskedConv1D)
-# snag_blacklist_modules = (LayerNorm, Scale, LayerScale)
-# def snag_filter(mn, m, pn, p, decay, no_decay):
-#     fpn = '%s.%s' % (mn, pn) if mn else pn # full param name
+DECAY_MODULES = (nn.Linear, nn.Conv1d, nn.Conv2d, MaskedConv1D)
+NO_DECAY_MODULES = (
+    LayerNorm, LayerScale, Scale, nn.LayerNorm, nn.Embedding,
+    nn.BatchNorm2d, nn.BatchNorm3d,
+)
 
-#     captured = True
-#     if pn.endswith('bias'):
-#         no_decay.add(fpn)
-#     elif pn.endswith('weight') and isinstance(m, snag_whitelist_modules):
-#         decay.add(fpn)
-#     elif pn.endswith('weight') and isinstance(m, snag_blacklist_modules):
-#         no_decay.add(fpn)
-#     elif pn.endswith('scale') and isinstance(m, snag_blacklist_modules):
-#         no_decay.add(fpn)
-#     elif pn.endswith('bkgd_token'):
-#         no_decay.add(fpn)
-#     else:
-#         captured = False
-    
-#     return captured
 
-# cocap_whitelist_weight_modules = (nn.Linear, nn.MultiheadAttention, nn.Conv2d)
-# cocap_blacklist_weight_modules = (nn.LayerNorm, nn.BatchNorm2d, nn.Embedding)
-# def cocap_filter(mn, m, pn, p, decay, no_decay):
-#     fpn = '%s.%s' % (mn, pn) if mn else pn  # full param name
-
-#     captured = True
-#     if pn.endswith("bias"):
-#         no_decay.add(fpn)
-#     elif pn.endswith("proj") or pn.endswith("projection"):
-#         decay.add(fpn)
-#     elif fpn.endswith("embedding"):
-#         no_decay.add(fpn)
-#     elif pn.endswith("weight") and isinstance(m, cocap_whitelist_weight_modules):
-#         decay.add(fpn)
-#     elif pn.endswith("weight") and isinstance(m, cocap_blacklist_weight_modules):
-#         no_decay.add(fpn)
-#     else:
-#         captured = False
-    
-#     return captured
-
-# def additional_infuse(mn, m, pn, p, decay, no_decay):
-#     fpn = '%s.%s' % (mn, pn) if mn else pn  # full param name
-
-#     captured = False
-#     if fpn.endswith("pos_embedding"):
-#         no_decay.add(fpn)
-#         captured = True
-#     else:
-#         captured = cocap_filter(mn, m, pn, p, decay, no_decay) # HACK
-    
-#     return captured
-
-def make_optimizer(model, opt):
+def _split_decay_param_names(model):
     decay, no_decay = set(), set()
-    whitelist_modules = (nn.Linear, nn.Conv1d, MaskedConv1D, nn.Conv2d)
-    blacklist_modules = (LayerNorm, Scale, LayerScale, nn.LayerNorm, nn.Embedding, nn.BatchNorm2d, nn.BatchNorm3d)
 
-    # has_mv_enc = (model.mv_enc is not None)
-
-    for mn, m in model.named_modules():
-        for pn, p in m.named_parameters():
-            if '.' in pn:
-                continue 
-            
-            if not p.requires_grad:
+    for module_name, module in model.named_modules():
+        for param_name, param in module.named_parameters(recurse=False):
+            if not param.requires_grad:
                 continue
-            fpn = '%s.%s' % (mn, pn) if mn else pn # full param name
 
-            if pn.endswith('bias'):
-                no_decay.add(fpn)
-            elif pn.endswith('weight') and isinstance(m, whitelist_modules):
-                decay.add(fpn)
-            elif pn.endswith('weight') and isinstance(m, blacklist_modules):
-                no_decay.add(fpn)
-            elif pn.endswith('scale') and isinstance(m, blacklist_modules):
-                no_decay.add(fpn)
-            elif pn.endswith('bkgd_token'):
-                no_decay.add(fpn)
-            # elif fpn.startswith("mv_enc") and cocap_filter(mn, m, pn, p, decay, no_decay):
-            #     pass
-            # elif fpn.startswith("input_fusion") and additional_infuse(mn, m, pn, p, decay, no_decay):
-            #     pass
-            # elif pn == 'in_proj_weight' and ('attn' in mn):
-            #     no_decay.add(fpn)
-            # elif pn.endswith('embedding') and ('mv_enc' in mn):
-            #     no_decay.add(fpn)
-            # elif fpn.endswith('spatial_enc.proj'):
-            #     decay.add(fpn)
-            # elif fpn.endswith('pe'):
-            #     decay.add(fpn)
+            full_name = f"{module_name}.{param_name}" if module_name else param_name
+            if param_name.endswith("bias"):
+                no_decay.add(full_name)
+            elif param_name.endswith("weight") and isinstance(module, DECAY_MODULES):
+                decay.add(full_name)
+            elif param_name.endswith(("weight", "scale")) and isinstance(module, NO_DECAY_MODULES):
+                no_decay.add(full_name)
+            elif param_name.endswith("bkgd_token"):
+                no_decay.add(full_name)
 
-    param_dict = {pn: p for pn, p in model.named_parameters() if p.requires_grad}
+    param_dict = {name: p for name, p in model.named_parameters() if p.requires_grad}
     inter_params = decay & no_decay
     union_params = decay | no_decay
+    missing_params = set(param_dict.keys()) - union_params
+
     assert len(inter_params) == 0, (
-        'parameters {:s} made it into both decay/no decay sets'
-        ''.format(str(inter_params))
+        "parameters {:s} made it into both decay/no decay sets"
+        "".format(str(inter_params))
     )
-    assert len(param_dict.keys() - union_params) == 0, (
-        'parameters {:s} were not separated into either decay/no decay set'
-        ''.format(str(param_dict.keys() - union_params))
+    assert len(missing_params) == 0, (
+        "parameters {:s} were not separated into either decay/no decay set"
+        "".format(str(missing_params))
     )
 
-    decay = sorted(list(decay))
-    no_decay = sorted(list(no_decay))
+    return sorted(decay), sorted(no_decay), param_dict
+
+
+def make_optimizer(model, opt):
+    decay, no_decay, param_dict = _split_decay_param_names(model)
 
     param_groups = [
-        {'params': [param_dict[pn] for pn in decay],
-         'weight_decay': opt['weight_decay'],
-         'lr': opt['lr'],
+        {
+            "params": [param_dict[pn] for pn in decay],
+            "weight_decay": opt["weight_decay"],
+            "lr": opt["lr"],
         },
-        {'params': [param_dict[pn] for pn in no_decay],
-         'weight_decay': 0.0,
-         'lr': opt['lr'],
+        {
+            "params": [param_dict[pn] for pn in no_decay],
+            "weight_decay": 0.0,
+            "lr": opt["lr"],
         },
     ]
 
-    # vid_groups = [
-    #     {'params': [param_dict[pn] \
-    #         for pn in decay if 'vid_net' in pn],
-    #      'weight_decay': opt['weight_decay'],
-    #      'lr': opt.get('vid_net_lr', opt['lr']),
-    #     },
-    #     {'params': [param_dict[pn] \
-    #         for pn in no_decay if 'vid_net' in pn],
-    #      'weight_decay': 0.0,
-    #      'lr': opt.get('vid_net_lr', opt['lr']),
-    #     },
-    # ]
-
-    # text_groups = [
-    #     {'params': [param_dict[pn] \
-    #         for pn in decay if 'text_net' in pn],
-    #      'weight_decay': opt['weight_decay'],
-    #      'lr': opt.get('text_net_lr', opt['lr']),
-    #     },
-    #     {'params': [param_dict[pn] \
-    #         for pn in no_decay if 'text_net' in pn],
-    #      'weight_decay': 0.0,
-    #      'lr': opt.get('text_net_lr', opt['lr']),
-    #     },
-    # ]
-
-    # fusion_groups = [
-    #     {'params': [param_dict[pn] \
-    #         for pn in decay if 'fusion' in pn],
-    #      'weight_decay': opt['weight_decay'],
-    #      'lr': opt.get('fusion_lr', opt['lr']),
-    #     },
-    #     {'params': [param_dict[pn] \
-    #         for pn in no_decay if 'fusion' in pn],
-    #      'weight_decay': 0.0,
-    #      'lr': opt.get('fusion_lr', opt['lr']),
-    #     },
-    # ]
-
-    # cls_head_groups = [
-    #     {'params': [param_dict[pn] \
-    #         for pn in decay if 'cls_head' in pn],
-    #      'weight_decay': opt['weight_decay'],
-    #      'lr': opt.get('cls_head_lr', opt['lr']),
-    #     },
-    #     {'params': [param_dict[pn] \
-    #         for pn in no_decay if 'cls_head' in pn],
-    #      'weight_decay': 0.0,
-    #      'lr': opt.get('cls_head_lr', opt['lr']),
-    #     },
-    # ]
-
-    # reg_head_groups = [
-    #     {'params': [param_dict[pn] \
-    #         for pn in decay if 'reg_head' in pn],
-    #      'weight_decay': opt['weight_decay'],
-    #      'lr': opt.get('reg_head_lr', opt['lr']),
-    #     },
-    #     {'params': [param_dict[pn] \
-    #         for pn in no_decay if 'reg_head' in pn],
-    #      'weight_decay': 0.0,
-    #      'lr': opt.get('reg_head_lr', opt['lr']),
-    #     },
-    # ]
-
-    # param_groups = (
-    #     vid_groups + text_groups + fusion_groups
-    #     + cls_head_groups + reg_head_groups
-    # )
-
-    # # if opt.model.mv_enc.name is not None:
-    # if model.mv_enc is not None or True:
-    #     mv_enc_groups = [
-    #         {'params': [param_dict[pn] \
-    #             for pn in decay if 'mv_enc' in pn],
-    #         'weight_decay': opt['weight_decay'],
-    #         'lr': opt.get('reg_head_lr', opt['lr']),
-    #         },
-    #         {'params': [param_dict[pn] \
-    #             for pn in no_decay if 'mv_enc' in pn],
-    #         'weight_decay': 0.0,
-    #         'lr': opt.get('reg_head_lr', opt['lr']),
-    #         },
-    #     ]
-    #     param_groups.extend(mv_enc_groups)
-
-    if opt['name'] == 'sgd':
+    if opt["name"] == "sgd":
         optimizer = torch.optim.SGD(
             param_groups,
-            lr=opt['lr'],
-            momentum=opt.get('momentum', 0.9),
-            weight_decay=opt.get('weight_decay', 0)
+            lr=opt["lr"],
+            momentum=opt.get("momentum", 0.9),
+            weight_decay=opt.get("weight_decay", 0),
         )
-    elif opt['name'] == 'adam':
+    elif opt["name"] == "adam":
         optimizer = torch.optim.Adam(
             param_groups,
-            lr=opt['lr'], betas=(0.9, 0.999),
-            weight_decay=opt.get('weight_decay', 0)
+            lr=opt["lr"],
+            betas=(0.9, 0.999),
+            weight_decay=opt.get("weight_decay", 0),
         )
-    elif opt['name'] == 'adamw':
+    elif opt["name"] == "adamw":
         optimizer = torch.optim.AdamW(
             param_groups,
-            lr=opt['lr'], betas=(0.9, 0.999),
-            weight_decay=opt.get('weight_decay', 0)
-        )
-    else:
-        raise NotImplementedError(f"invalid optimizer: {opt['name']}")
-
-    return optimizer
-
-# def make_optimizer_pretrain(model, opt):
-#     decay, no_decay = set(), set()
-
-#     for mn, m in model.named_modules():
-#         for pn, p in m.named_parameters():
-#             if '.' in pn:
-#                 continue 
-            
-#             if not p.requires_grad:
-#                 continue
-
-#             fpn = '%s.%s' % (mn, pn) if mn else pn # full param name
-
-#             if cocap_filter(mn, m, pn, p, decay, no_decay):
-#                 pass
-#             elif fpn.endswith('pe'):
-#                 print(fpn)
-#                 no_decay.add(fpn)
-#             elif fpn.endswith('mask_out_token'):
-#                 print(fpn)
-#                 no_decay.add(fpn)
-
-#     param_dict = {pn: p for pn, p in model.named_parameters() if p.requires_grad}
-#     inter_params = decay & no_decay
-#     union_params = decay | no_decay
-#     assert len(inter_params) == 0, (
-#         'parameters {:s} made it into both decay/no decay sets'
-#         ''.format(str(inter_params))
-#     )
-#     assert len(param_dict.keys() - union_params) == 0, (
-#         'parameters {:s} were not separated into either decay/no decay set'
-#         ''.format(str(param_dict.keys() - union_params))
-#     )
-
-#     decay = sorted(list(decay))
-#     no_decay = sorted(list(no_decay))
-
-#     param_groups = [
-#         {'params': [param_dict[pn] for pn in decay],
-#          'weight_decay': opt['weight_decay'],
-#          'lr': opt['lr'],
-#         },
-#         {'params': [param_dict[pn] for pn in no_decay],
-#          'weight_decay': 0.0,
-#          'lr': opt['lr'],
-#         },
-#     ]
-
-#     if opt['name'] == 'sgd':
-#         optimizer = torch.optim.SGD(
-#             param_groups,
-#             lr=opt['lr'],
-#             momentum=opt.get('momentum', 0.9),
-#             weight_decay=opt.get('weight_decay', 0)
-#         )
-#     elif opt['name'] == 'adam':
-#         optimizer = torch.optim.Adam(
-#             param_groups,
-#             lr=opt['lr'], betas=(0.9, 0.999),
-#             weight_decay=opt.get('weight_decay', 0)
-#         )
-#     elif opt['name'] == 'adamw':
-#         optimizer = torch.optim.AdamW(
-#             param_groups,
-#             lr=opt['lr'], betas=(0.9, 0.999),
-#             weight_decay=opt.get('weight_decay', 0)
-#         )
-#     else:
-#         raise NotImplementedError(f"invalid optimizer: {opt['name']}")
-
-#     return optimizer
-
-
-# def make_timesformer_optimizer(model, opt):
-#     """
-#     Construct a stochastic gradient descent or ADAM optimizer with momentum.
-#     Details can be found in:
-#     Herbert Robbins, and Sutton Monro. "A stochastic approximation method."
-#     and
-#     Diederik P.Kingma, and Jimmy Ba.
-#     "Adam: A Method for Stochastic Optimization."
-
-#     Args:
-#         model (model): model to perform stochastic gradient descent
-#         optimization or ADAM optimization.
-#         cfg (config): configs of hyper-parameters of SGD or ADAM, includes base
-#         learning rate,  momentum, weight_decay, dampening, and etc.
-#     """
-#     # Batchnorm parameters.
-#     bn_params = []
-#     # Non-batchnorm parameters.
-#     non_bn_parameters = []
-#     for name, p in model.named_parameters():
-#         if "bn" in name:
-#             bn_params.append(p)
-#         else:
-#             non_bn_parameters.append(p)
-#     # Apply different weight decay to Batchnorm and non-batchnorm parameters.
-#     # In Caffe2 classification codebase the weight decay for batchnorm is 0.0.
-#     # Having a different weight decay on batchnorm might cause a performance
-#     # drop.
-#     BN_WEIGHT_DECAY = 0
-#     SOLVER_WEIGHT_DECAY = opt.weight_decay
-#     optim_params = [
-#         {"params": bn_params, "weight_decay": BN_WEIGHT_DECAY},
-#         {"params": non_bn_parameters, "weight_decay": SOLVER_WEIGHT_DECAY},
-#     ]
-#     # Check all parameters will be passed into optimizer.
-#     assert len(list(model.parameters())) == len(non_bn_parameters) + len(
-#         bn_params
-#     ), "parameter size does not match: {} + {} != {}".format(
-#         len(non_bn_parameters), len(bn_params), len(list(model.parameters()))
-#     )
-
-#     if opt.name == "sgd":
-#         return torch.optim.SGD(
-#             optim_params,
-#             lr=opt.lr,
-#             momentum=opt.momentum,
-#             weight_decay=opt.weight_decay,
-#             dampening=opt.dampening,
-#             nesterov=opt.netserov,
-#         )
-#     elif opt.name == "adam":
-#         return torch.optim.Adam(
-#             optim_params,
-#             lr=opt.lr,
-#             betas=(0.9, 0.999),
-#             eps=1e-08,
-#             weight_decay=opt.weight_decay,
-#         )
-#     elif opt.name == "adamw":
-#         return torch.optim.AdamW(
-#             optim_params,
-#             lr=opt.lr,
-#             betas=(0.9, 0.999),
-#             eps=1e-08,
-#             weight_decay=opt.weight_decay,
-#         )
-#     else:
-#         raise NotImplementedError(
-#             "Does not support {} optimizer".format(opt.name)
-#         )
-
-# def make_timesformer_optimizer_v2(model, opt):
-#     """
-#     Construct a stochastic gradient descent or ADAM optimizer with momentum.
-#     Details can be found in:
-#     Herbert Robbins, and Sutton Monro. "A stochastic approximation method."
-#     and
-#     Diederik P.Kingma, and Jimmy Ba.
-#     "Adam: A Method for Stochastic Optimization."
-
-#     Args:
-#         model (model): model to perform stochastic gradient descent
-#         optimization or ADAM optimization.
-#         cfg (config): configs of hyper-parameters of SGD or ADAM, includes base
-#         learning rate,  momentum, weight_decay, dampening, and etc.
-#     """
-#     # Batchnorm parameters.
-#     bn_params = []
-#     # Non-batchnorm parameters.
-#     non_bn_parameters = []
-#     for name, p in model.named_parameters():
-#         if "bn" in name:
-#             bn_params.append(p)
-#         if ('pos_embed') in name or ('cls_token') in name:
-#             bn_params.append(p)
-#         else:
-#             non_bn_parameters.append(p)
-#     # Apply different weight decay to Batchnorm and non-batchnorm parameters.
-#     # In Caffe2 classification codebase the weight decay for batchnorm is 0.0.
-#     # Having a different weight decay on batchnorm might cause a performance
-#     # drop.
-#     BN_WEIGHT_DECAY = 0
-#     SOLVER_WEIGHT_DECAY = opt.weight_decay
-#     optim_params = [
-#         {"params": bn_params, "weight_decay": BN_WEIGHT_DECAY},
-#         {"params": non_bn_parameters, "weight_decay": SOLVER_WEIGHT_DECAY},
-#     ]
-#     # Check all parameters will be passed into optimizer.
-#     assert len(list(model.parameters())) == len(non_bn_parameters) + len(
-#         bn_params
-#     ), "parameter size does not match: {} + {} != {}".format(
-#         len(non_bn_parameters), len(bn_params), len(list(model.parameters()))
-#     )
-
-#     if opt.name == "sgd":
-#         return torch.optim.SGD(
-#             optim_params,
-#             lr=opt.lr,
-#             momentum=opt.momentum,
-#             weight_decay=opt.weight_decay,
-#             dampening=opt.dampening,
-#             nesterov=opt.netserov,
-#         )
-#     elif opt.name == "adam":
-#         return torch.optim.Adam(
-#             optim_params,
-#             lr=opt.lr,
-#             betas=(0.9, 0.999),
-#             eps=1e-08,
-#             weight_decay=opt.weight_decay,
-#         )
-#     elif opt.name == "adamw":
-#         return torch.optim.AdamW(
-#             optim_params,
-#             lr=opt.lr,
-#             betas=(0.9, 0.999),
-#             eps=1e-08,
-#             weight_decay=opt.weight_decay,
-#         )
-#     else:
-#         raise NotImplementedError(
-#             "Does not support {} optimizer".format(opt.name)
-#         )
-
-def make_optimizer_simple(model, opt):
-    param_groups = model.parameters()
-    if opt['name'] == 'sgd':
-        optimizer = torch.optim.SGD(
-            param_groups,
-            lr=opt['lr'],
-            momentum=opt.get('momentum', 0.9),
-            weight_decay=opt.get('weight_decay', 0)
-        )
-    elif opt['name'] == 'adam':
-        optimizer = torch.optim.Adam(
-            param_groups,
-            lr=opt['lr'], betas=(0.9, 0.999),
-            weight_decay=opt.get('weight_decay', 0)
-        )
-    elif opt['name'] == 'adamw':
-        optimizer = torch.optim.AdamW(
-            param_groups,
-            lr=opt['lr'], betas=(0.9, 0.999),
-            weight_decay=opt.get('weight_decay', 0)
+            lr=opt["lr"],
+            betas=(0.9, 0.999),
+            weight_decay=opt.get("weight_decay", 0),
         )
     else:
         raise NotImplementedError(f"invalid optimizer: {opt['name']}")
@@ -703,13 +315,6 @@ def make_scheduler(optimizer, opt):
             gamma=opt.get('gamma', 0.1)
         )
     elif opt['name'] == 'null':
-        # step_itrs = [opt['itrs_per_epoch'] * s for s in opt['steps']]
-        # scheduler = LinearWarmupMultiStepLR(
-        #     optimizer,
-        #     warmup_epochs=warmup_itrs,
-        #     milestones=step_itrs,
-        #     gamma=opt.get('gamma', 0.1)
-        # )
         scheduler = None
     else:
         raise NotImplementedError(f"invalid scheduler: {opt['name']}")
