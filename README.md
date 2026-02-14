@@ -17,7 +17,7 @@ Official Repo for our CVPR 2025 long-temporal grounding paper.
 </p>
 
 ## TODO
-- [ ] Data and model checkpoints are in uploading.
+- [x] Upload data and model checkpoints
 - [ ] Release code for side-kick encoder training.
 
 ## Installation

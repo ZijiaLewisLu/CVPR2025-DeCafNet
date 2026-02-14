@@ -113,10 +113,9 @@ def make_dataset_from_registry(opt, datasets, make_tokenizer_fn, num_epochs=1, i
         opt.data = opt.eval.data
     data_opt = opt.data
 
-    if 'tokenizer' in data_opt:
-        tokenizer = make_tokenizer_fn(data_opt.pop('tokenizer'))
-    else:
-        tokenizer = None
+    tokenizer = data_opt.pop('tokenizer', None)
+    if tokenizer is not None:
+        tokenizer = make_tokenizer_fn(tokenizer)
 
     if is_training:
         dataset_name = data_opt.pop('name')
