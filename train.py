@@ -75,6 +75,9 @@ def main(rank, args): # opt, wandb_run):
     elif opt.task == 'ego4d':         
         from libs.ego4d.worker import Trainer
 
+    elif opt.task == 'encoder':
+        from libs.encoder.worker import Trainer
+
     trainer = Trainer(opt, wandb_run=wandb_run)
 
     trainer.run()

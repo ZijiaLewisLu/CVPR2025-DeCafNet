@@ -94,6 +94,71 @@ def make_optimizer(model, opt):
     return optimizer
 
 
+def make_encoder_optimizer(model, opt, lr_group):
+    """
+    Optimizer builder for encoder training where params are split into lr groups.
+
+    Args:
+        model: module to optimize.
+        opt: optimizer cfg (CfgNode/dict-like).
+        lr_group: list of [lr, [(name, param), ...]] groups.
+    """
+    bn_weight_decay = 0.0
+    solver_weight_decay = opt.get("weight_decay", 0.0)
+    optim_params = []
+
+    for lr, group in lr_group:
+        bn_params = []
+        non_bn_parameters = []
+        for name, p in group:
+            if "bn" in name:
+                bn_params.append(p)
+            if ("pos_embed" in name) or ("cls_token" in name):
+                bn_params.append(p)
+            else:
+                non_bn_parameters.append(p)
+
+        optim_params.append(
+            {"params": bn_params, "weight_decay": bn_weight_decay, "lr": lr}
+        )
+        optim_params.append(
+            {"params": non_bn_parameters, "weight_decay": solver_weight_decay, "lr": lr}
+        )
+
+    assert len(list(model.parameters())) == sum(len(x["params"]) for x in optim_params), (
+        "parameter size does not match grouped optimizer params"
+    )
+
+    name = opt.get("name")
+    if name == "sgd":
+        return torch.optim.SGD(
+            optim_params,
+            lr=opt.get("lr"),
+            momentum=opt.get("momentum", 0.9),
+            weight_decay=solver_weight_decay,
+            dampening=opt.get("dampening", 0.0),
+            nesterov=opt.get("nesterov", opt.get("netserov", False)),
+        )
+    elif name == "adam":
+        return torch.optim.Adam(
+            optim_params,
+            lr=opt.get("lr"),
+            betas=(0.9, 0.999),
+            eps=1e-08,
+            weight_decay=solver_weight_decay,
+        )
+    elif name == "adamw":
+        return torch.optim.AdamW(
+            optim_params,
+            lr=opt.get("lr"),
+            betas=(0.9, 0.999),
+            eps=1e-08,
+            weight_decay=solver_weight_decay,
+        )
+    else:
+        raise NotImplementedError(f"Does not support {name} optimizer")
+
+
 class LinearWarmupCosineAnnealingLR(_LRScheduler):
     """
     Sets the learning rate of each parameter group to follow a linear warmup schedule

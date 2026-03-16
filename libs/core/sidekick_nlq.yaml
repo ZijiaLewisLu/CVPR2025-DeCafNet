@@ -1,0 +1,108 @@
+model:
+  text_net:
+    name: identity        # identity | transformer
+    in_dim: 768           # input dimension
+    embd_dim: 768         # embedding dimension
+    n_heads: 4            # number of attention heads
+    max_seq_len: 24       # max number of tokens in text query
+    use_abs_pe: false     # whether to use absolute position encoding
+    use_bkgd_token: true  # whether to add background token
+    
+  vid_net:
+    name: transformer
+    in_dim: 256           # input dimension
+    embd_dim: 384         # embedding dimension
+    n_heads: 4            # number of attention heads
+    max_seq_len: 512      # max number of clips in video
+    arch: [2, 0, 8]       # backbone architecture (embed | stem | branch)
+    mha_win_size: 19      # window size for local self-attention
+    attn_pdrop: 0.0       # dropout rate for attention map
+    proj_pdrop: 0.1       # dropout rate for projection
+    path_pdrop: 0.1       # dropout rate for residual paths
+    use_abs_pe: true      # whether to use absolute position encoding
+    
+  fusion:
+    name: xattn
+    n_layers: 2           # number of fusion layers
+    n_heads: 4            # number of attention heads
+    attn_pdrop: 0.0       # dropout rate for attention map
+    proj_pdrop: 0.1       # dropout rate for projection
+    path_pdrop: 0.1       # dropout rate for residual path
+    xattn_mode: adaln     # cross-attention mode
+    
+  cls_head:
+    name: cls
+    n_layers: 2           # number of conv layers (output layer excluded)
+    prior_prob: 0.0       # prior probability for positive class
+
+  reg_head:
+    name: reg
+    n_layers: 2           # number of conv layers (output layer excluded)
+
+pt_gen:
+  regression_range: 4     # normalized regression range
+  sigma: 0.5              # controls overlap of regression ranges (1 for no overlap)
+
+data:
+  name: ego4d_pretraining
+  split: train
+  eval_split: val
+  vid_feat_dir: /tmp/decafnet/data/datasets/egovlpv1/features/v1/video/32x8_d2
+  text_feat_dir: /tmp/decafnet/data/datasets/egovlpv1/features/v1/text/text_768d/
+  ego4d:
+    # clip-level pretraining annotations (segments aligned with vid_feat_dir clips)
+    anno_file: /tmp/decafnet/data/datasets/egovlpv1/features/v1/nlq_32x8_d2.json
+    # official Ego4D clip->video mapping for decoding frames from raw videos
+    clip_train_anno: '/tmp/decafnet/data/datasets/ego4d_nlq_train.json'
+    clip_val_anno: '/tmp/decafnet/data/datasets/ego4d_nlq_val.json'
+    metadata: '/tmp/decafnet/data/datasets/ego4d_full.json'
+  text_cls_fname: '/tmp/decafnet/data/datasets/egovlpv1/features/v1/text_cls/sentence_256_{split}.npy'
+  ext_score_dir: null
+
+  clip_size: 32
+  clip_stride: 8
+  clip_d: 4.0
+  downsample_rate: 2      # downsampling stride for video features
+
+  to_fixed_len: false     # whether to resize video to fixed length
+  crop_ratio: null        # crop ratio for video features
+  max_num_text: 2
+
+  img_size: 224
+
+encoder: 
+  fd: 2
+  patch_size: 16
+  sp_loc: 0
+  tp_loc: 0
+  pretrain: '/tmp/decafnet/data/datasets/egovlpv1/pretrained/egovlp_weight_only.pth'
+  tau: 16
+  gc_seg: 4
+  depth: 12
+  dw: 0.75
+  clv: 2
+  itp: true
+  dprate: 0.3
+
+train:
+  batch_size: 1
+  num_workers: 8
+  epochs: 40
+
+optimizer:
+  name: adamw
+  lr: 2.e-4
+  weight_decay: 0.05
+  clip_grad_norm: 1.0
+  lpretrain: 1.e-6
+
+seed: 1234567891
+
+task: encoder
+
+aux:
+  log_interval: 50
+  log: 'end2end'
+  gpu: 0
+  # dryrun: true
+  wandb_project: 'end2end'
